@@ -10,6 +10,14 @@ done
 xcrun simctl ui "$UDID" appearance "${THEME:-light}"
 xcrun simctl ui "$UDID" content_size "${TEXT_SIZE:-large}"
 xcrun simctl location "$UDID" set "$GEO" 2>/dev/null || true
+if [ -n "${WEB_URL:-}" ]; then
+  # A website (web_url input): no app. Safari opens it, marked as a test visit
+  # (?qa=phone-<persona>) so the site keeps it out of its visitor figures.
+  case "$WEB_URL" in *\?*) URL="$WEB_URL&qa=phone-$PERSONA" ;; *) URL="$WEB_URL?qa=phone-$PERSONA" ;; esac
+  APP_ID=com.apple.mobilesafari
+  export APP_ID
+  xcrun simctl openurl "$UDID" "$URL"; sleep 10
+else
 APP=$(find app -maxdepth 2 -name '*.app' -type d | head -1)
 xcrun simctl install "$UDID" "$APP" || { echo "install failed"; exit 1; }
 # The bundle id inside the app wins: it often differs from the Android package
@@ -18,6 +26,7 @@ BID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist" 2
 if [ -n "$BID" ] && [ "$BID" != "$APP_ID" ]; then echo "Bundle id read from the app (differs from app_id)"; APP_ID=$BID; fi
 export APP_ID
 xcrun simctl launch "$UDID" "$APP_ID"; sleep 8
+fi
 # First capture stores the screen width in points for gesture.sh
 python3 scripts/ios/screen.py "$RUNNER_TEMP/warmup" 00 >/dev/null 2>&1 || true
 # Optional screen recording, kept in results/ (encrypted like the rest)
@@ -30,7 +39,7 @@ if [ "${RECORD_VIDEO:-false}" = true ]; then
 fi
 # The agent (another model API if llm_base_url is set)
 source scripts/llm_env.sh || exit 1
-claude -p "Read $BRIEF and personas.json, then do the mission until the final report. PERSONA=$PERSONA PLATFORM=ios APP_ID=$APP_ID. Device: $DEVICE, text size ${TEXT_SIZE:-large}, theme ${THEME:-light}, language $LOCALE. The simulator is already booted and the tools find it on their own (UDID is set): use the commands of the brief directly. Report anything that does not fit this screen (cut text, off-screen buttons, under the notch or home bar, broken layout)." \
+claude -p "Read $BRIEF and personas.json, then do the mission until the final report. PERSONA=$PERSONA PLATFORM=ios APP_ID=$APP_ID. Device: $DEVICE, text size ${TEXT_SIZE:-large}, theme ${THEME:-light}, language $LOCALE. The simulator is already booted and the tools find it on their own (UDID is set): use the commands of the brief directly. Report anything that does not fit this screen (cut text, off-screen buttons, under the notch or home bar, broken layout).${URL:+ The site under test: $URL (its browser is open on it).}" \
   --model "${MODEL:-sonnet}" --max-turns 400 --output-format json \
   --allowedTools "Bash(bash scripts/ios/gesture.sh:*),Bash(python3 scripts/ios/screen.py:*),Bash(python3 scripts/ios/type.py:*),Bash(sleep:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Read,Write,Edit" \
   > results/agent-output.json 2> results/agent-errors.txt
